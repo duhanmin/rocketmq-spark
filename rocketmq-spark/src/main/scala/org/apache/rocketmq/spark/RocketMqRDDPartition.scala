@@ -17,6 +17,7 @@
 
 package org.apache.rocketmq.spark
 
+import com.alibaba.rocketmq.common.message.MessageQueue
 import org.apache.spark.Partition
 
 
@@ -24,32 +25,34 @@ import org.apache.spark.Partition
   * the Partition for RocketMqRDD
   * @param index the partition id for rdd
   * @param topic the rockermq topic
+  * @param name the broker name
   * @param queueId the rocketmq queue id
-  * @param partitionOffsetRanges Represents a range of offsets from a single partition
-  *
+  * @param fromOffset inclusive starting offset
+  * @param untilOffset exclusive ending offset
   */
 class RocketMqRDDPartition(
                          val index: Int,
                          val topic: String,
+                         val name:String,
                          val queueId: Int,
-                         val partitionOffsetRanges: Array[OffsetRange]
+                         val fromOffset: Long,
+                         val untilOffset: Long
                        ) extends Partition {
   /** Number of messages this partition refers to */
-  def count(): Long = {
-    if (!partitionOffsetRanges.isEmpty)
-      partitionOffsetRanges.map(_.count).sum
-    else 0L
-  }
+  def count(): Long = untilOffset - fromOffset
 
 
-  /** rocketmq TopicQueueId object, for convenience */
-  def topicQueueId(): TopicQueueId = new TopicQueueId(topic, queueId)
+//  /** rocketmq TopicQueueId object, for convenience */
+//  def topicQueueId(): TopicQueueId = new TopicQueueId(topic, queueId)
 
-  def brokerNames(): Set[String] = {
-    partitionOffsetRanges.map(_.brokerName).sorted.toSet
-  }
+  def messageQueue():MessageQueue = new MessageQueue(topic,name,queueId)
+
+//  def brokerName(): Set[String] = {
+//    offsetRange.map(_.brokerName).sorted.toSet
+//  }
+
 
   override def toString: String = {
-    s"$index $topic $queueId ${partitionOffsetRanges.mkString(",")}"
+    s"$index $topic $name $queueId $fromOffset $untilOffset"
   }
 }

@@ -19,10 +19,11 @@ package org.apache.rocketmq.spark
 
 import java.{util => ju}
 
-import org.apache.rocketmq.common.message.MessageQueue
+import com.alibaba.rocketmq.common.message.MessageQueue
+
 
 trait HasOffsetRanges {
-  def offsetRanges: ju.Map[TopicQueueId, Array[OffsetRange]]
+  def offsetRanges: Array[OffsetRange]
 }
 
 trait CanCommitOffsets {
@@ -31,7 +32,7 @@ trait CanCommitOffsets {
     * This is only needed if you intend to store offsets in rocketmq, instead of your own store.
     * @param offsetRanges The maximum untilOffset for a given partition will be used at commit.
     */
-  def commitAsync(offsetRanges: ju.Map[TopicQueueId, Array[OffsetRange]]): Unit
+  def commitAsync(offsetRanges: Array[OffsetRange]): Unit
 
   /**
     * Queue up offset ranges for commit to rocketmq at a future time.  Threadsafe.
@@ -39,7 +40,7 @@ trait CanCommitOffsets {
     * @param offsetRanges The maximum untilOffset for a given partition will be used at commit.
     * @param callback Only the most recently provided callback will be used at commit.
     */
-  def commitAsync(offsetRanges: ju.Map[TopicQueueId, Array[OffsetRange]], callback: OffsetCommitCallback): Unit
+  def commitAsync(offsetRanges: Array[OffsetRange], callback: OffsetCommitCallback): Unit
 }
 
 /**

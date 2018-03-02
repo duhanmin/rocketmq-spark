@@ -17,8 +17,8 @@
  */
 package org.apache.rocketmq.spark.streaming;
 
-import org.apache.rocketmq.common.message.Message;
-import org.apache.rocketmq.common.message.MessageExt;
+import com.alibaba.rocketmq.common.message.Message;
+import com.alibaba.rocketmq.common.message.MessageExt;
 
 import java.io.Serializable;
 import java.util.Iterator;

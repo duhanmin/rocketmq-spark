@@ -17,7 +17,7 @@
  */
 package org.apache.rocketmq.spark.streaming;
 
-import org.apache.rocketmq.common.message.MessageExt;
+import com.alibaba.rocketmq.common.message.MessageExt;
 import org.apache.rocketmq.spark.RocketMQConfig;
 import org.apache.spark.storage.StorageLevel;
 

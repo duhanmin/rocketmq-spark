@@ -19,12 +19,14 @@ package org.apache.rocketmq.spark
 
 import java.{util => ju}
 
+import com.alibaba.rocketmq.common.message.MessageQueue
+
 import scala.collection.JavaConverters._
 
 
 /**
   *  :: Experimental ::
-  * Choice of how to schedule consumers for a given [[TopicQueueId]] on an executor.
+  * Choice of how to schedule consumers for a given [[MessageQueue]] on an executor.
   * See [[LocationStrategy]] to obtain instances.
   * RocketMq consumers prefetch messages, so it's important for performance
   * to keep cached consumers on appropriate executors, not recreate them for every partition.
@@ -35,7 +37,7 @@ sealed abstract class LocationStrategy
 
 case object PreferConsistent extends LocationStrategy
 
-case class PreferFixed(hostMap: ju.Map[TopicQueueId, String]) extends LocationStrategy
+case class PreferFixed(hostMap: ju.Map[MessageQueue, String]) extends LocationStrategy
 
 /**
   * object to obtain instances of [[LocationStrategy]]

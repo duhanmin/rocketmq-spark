@@ -21,10 +21,10 @@ import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.{ConcurrentLinkedQueue, TimeUnit}
 import java.{lang => jl, util => ju}
 
-import org.apache.rocketmq.client.consumer.DefaultMQPullConsumer
-import org.apache.rocketmq.client.consumer.store.ReadOffsetType
-import org.apache.rocketmq.common.MixAll
-import org.apache.rocketmq.common.message.{MessageExt, MessageQueue}
+import com.alibaba.rocketmq.client.consumer.DefaultMQPullConsumer
+import com.alibaba.rocketmq.client.consumer.store.ReadOffsetType
+import com.alibaba.rocketmq.common.MixAll
+import com.alibaba.rocketmq.common.message.{MessageExt, MessageQueue}
 import org.apache.rocketmq.spark.{ConsumerStrategy, _}
 import org.apache.spark.storage.StorageLevel
 import org.apache.spark.streaming.dstream.{DStream, DStreamCheckpointData, InputDStream}
@@ -36,36 +36,37 @@ import scala.collection.JavaConverters._
 import scala.collection.mutable
 
 /**
-  *  A DStream where
+  * A DStream where
   * each given RocketMq topic/queueId corresponds to an RDD partition.
   * The configuration pull.max.speed.per.partition gives the maximum number
-  *  of messages per second that each '''partition''' will accept.
-  * @param groupId it is for rocketMq for identifying the consumer
-  * @param topics the topics for the rocketmq
+  * of messages per second that each '''partition''' will accept.
+  *
+  * @param groupId          it is for rocketMq for identifying the consumer
+  * @param topics           the topics for the rocketmq
   * @param locationStrategy locationStrategy In most cases, pass in [[LocationStrategy.PreferConsistent]],
-  *   see [[LocationStrategy]] for more details.
+  *                         see [[LocationStrategy]] for more details.
   * @param consumerStrategy consumerStrategy In most cases, pass in [[ConsumerStrategy.lastest]],
-  *   see [[ConsumerStrategy]] for more details
-  * @param autoCommit  whether commit the offset to the rocketmq server automatically or not
-  * @param forceSpecial Generally if the rocketmq server has checkpoint for the [[MessageQueue]], then the consumer
-  *  will consume from the checkpoint no matter we specify the offset or not. But if forceSpecial is true,
-  *  the rocketmq will start consuming from the specific available offset in any case.
-  * @param failOnDataLoss Zero data lost is not guaranteed when topics are deleted. If zero data lost is critical, 
-  * the user must make sure all messages in a topic have been processed when deleting a topic.
+  *                         see [[ConsumerStrategy]] for more details
+  * @param autoCommit       whether commit the offset to the rocketmq server automatically or not
+  * @param forceSpecial     Generally if the rocketmq server has checkpoint for the [[MessageQueue]], then the consumer
+  *                         will consume from the checkpoint no matter we specify the offset or not. But if forceSpecial is true,
+  *                         the rocketmq will start consuming from the specific available offset in any case.
+  * @param failOnDataLoss   Zero data lost is not guaranteed when topics are deleted. If zero data lost is critical,
+  *                         the user must make sure all messages in a topic have been processed when deleting a topic.
   */
 class MQPullInputDStream(
-    _ssc: StreamingContext,
-    groupId: String,
-    topics: ju.Collection[jl.String],
-    optionParams: ju.Map[String, String],
-    locationStrategy: LocationStrategy,
-    consumerStrategy: ConsumerStrategy,
-    autoCommit: Boolean,
-    forceSpecial: Boolean,
-    failOnDataLoss: Boolean
-  ) extends InputDStream[MessageExt](_ssc) with CanCommitOffsets{
+                          _ssc: StreamingContext,
+                          groupId: String,
+                          topics: ju.Collection[jl.String],
+                          optionParams: ju.Map[String, String],
+                          locationStrategy: LocationStrategy,
+                          consumerStrategy: ConsumerStrategy,
+                          autoCommit: Boolean,
+                          forceSpecial: Boolean,
+                          failOnDataLoss: Boolean
+                        ) extends InputDStream[MessageExt](_ssc) with CanCommitOffsets {
 
-  private var currentOffsets = mutable.Map[TopicQueueId, Map[String, Long]]()
+  private var currentOffsets = mutable.Map[MessageQueue, Long]()
 
   private val commitQueue = new ConcurrentLinkedQueue[OffsetRange]
 
@@ -73,7 +74,7 @@ class MQPullInputDStream(
 
   private val maxRateLimitPerPartition = optionParams.getOrDefault(RocketMQConfig.MAX_PULL_SPEED_PER_PARTITION,
     "-1").toInt
-  
+
   @transient private var kc: DefaultMQPullConsumer = null
 
   /**
@@ -87,17 +88,18 @@ class MQPullInputDStream(
       kc = RocketMqUtils.mkPullConsumerInstance(groupId, optionParams, "driver")
       val messageQueues = fetchSubscribeMessageQueues(topics)
       val iter = messageQueues.iterator
-      while (iter.hasNext){
+      while (iter.hasNext) {
         val messageQueue = iter.next
         val offset = computePullFromWhere(messageQueue)
-        val topicQueueId = new TopicQueueId(messageQueue.getTopic, messageQueue.getQueueId)
-        if (!currentOffsets.contains(topicQueueId)) {
-          currentOffsets += topicQueueId -> Map(messageQueue.getBrokerName -> offset)
-        } else {
-          if (!currentOffsets(topicQueueId).contains(messageQueue.getBrokerName)){
-            currentOffsets(topicQueueId) += messageQueue.getBrokerName -> offset
-          }
-        }
+        currentOffsets += messageQueue -> offset
+        //        val topicQueueId = new TopicQueueId(messageQueue.getTopic, messageQueue.getQueueId)
+        //        if (!currentOffsets.contains(topicQueueId)) {
+        //          currentOffsets += topicQueueId -> Map(messageQueue.getBrokerName -> offset)
+        //        } else {
+        //          if (!currentOffsets(topicQueueId).contains(messageQueue.getBrokerName)){
+        //            currentOffsets(topicQueueId) += messageQueue.getBrokerName -> offset
+        //          }
+        //        }
       }
 
       // timer persist
@@ -117,11 +119,11 @@ class MQPullInputDStream(
     kc
   }
 
-  private def fetchSubscribeMessageQueues(topics : ju.Collection[jl.String]): ju.HashSet[MessageQueue] = {
+  private def fetchSubscribeMessageQueues(topics: ju.Collection[jl.String]): ju.HashSet[MessageQueue] = {
     val messageQueueSet = new ju.HashSet[MessageQueue]
 
     val iter = topics.iterator
-    while (iter.hasNext){
+    while (iter.hasNext) {
       messageQueueSet.addAll(kc.fetchSubscribeMessageQueues(iter.next))
     }
     messageQueueSet
@@ -233,9 +235,9 @@ class MQPullInputDStream(
     super.persist(newLevel)
   }
 
-  protected def getPreferredHosts: ju.Map[TopicQueueId, String] = {
+  protected def getPreferredHosts: ju.Map[MessageQueue, String] = {
     locationStrategy match {
-      case PreferConsistent => ju.Collections.emptyMap[TopicQueueId, String]()
+      case PreferConsistent => ju.Collections.emptyMap[MessageQueue, String]()
       case PreferFixed(hostMap) => hostMap
     }
   }
@@ -263,47 +265,33 @@ class MQPullInputDStream(
     * calculate the until-offset per partition in theory
     */
   private def maxMessagesPerPartition(
-     offsets: Map[TopicQueueId, Map[String, Long]]): Option[Map[TopicQueueId, Map[String, Long]]] = {
-    val estimatedRateLimit = rateController.map(_.getLatestRate().toInt)
+                                       offsets: Map[MessageQueue, Long]): Option[Map[MessageQueue, Long]] = {
+    val estimatedRateLimit = rateController.map(_.getLatestRate())
 
-    var lagPerPartition = Map[TopicQueueId, Long]()
-    var totalLag = 0L
-    val lagPerPartitionPerQueue = offsets.map{ case (tp, value) =>
-      val partitionTotal = value.map{ case (name, maxOffset) =>
-        var count = Math.max(maxOffset - currentOffsets(tp)(name), 0)
-        totalLag += count
-        (name, count)
-      }
-      lagPerPartition += tp -> partitionTotal.values.sum
-      tp -> partitionTotal
+    val lagPerPartition = offsets.map { case (tp, offset) =>
+      tp -> Math.max(offset - currentOffsets(tp), 0)
     }
+
+    val totalLag = lagPerPartition.values.sum
 
     val effectiveRateLimitPerPartition = estimatedRateLimit.filter(_ > 0) match {
       case Some(rate) =>
-        lagPerPartitionPerQueue.map { case (tp, queues) =>
-          val backPressRate = Math.round(lagPerPartition(tp) / totalLag.toFloat * rate)
-          val partitionMessages = (if (maxRateLimitPerPartition > 0) {
-            Math.min(backPressRate, maxRateLimitPerPartition)} else backPressRate)
-          tp -> queues.map{ case (name, count) =>
-            (name, Math.ceil(count / lagPerPartition(tp).toFloat * partitionMessages))
-          }
+        lagPerPartition.map { case (tp, lag) =>
+          val backPressRate = Math.round(lag / totalLag.toFloat * rate)
+          tp -> (if (maxRateLimitPerPartition > 0) {
+            Math.min(backPressRate, maxRateLimitPerPartition)
+          } else backPressRate)
         }
       case None =>
-
-        lagPerPartitionPerQueue.map { case (tp, queues) =>
-          val partitionMessages = maxRateLimitPerPartition
-          tp -> queues.map{ case (name, count) =>
-            (name, Math.ceil(count / lagPerPartition(tp).toFloat * partitionMessages))
-          }
+        lagPerPartition.map {
+          _._1 -> maxRateLimitPerPartition
         }
     }
 
-    if (effectiveRateLimitPerPartition.flatMap(_._2).map(_._2).sum > 0) {
+    if (effectiveRateLimitPerPartition.values.sum > 0) {
       val secsPerBatch = context.graph.batchDuration.milliseconds.toDouble / 1000
       Some(effectiveRateLimitPerPartition.map {
-        case (tp, limit) => tp -> limit.map{ case (name, count) =>
-          name -> (count * secsPerBatch).toLong
-        }
+        case (tp, limit) => tp -> (secsPerBatch * limit).toLong
       })
     } else {
       None
@@ -314,53 +302,35 @@ class MQPullInputDStream(
   /**
     * Returns the latest (highest) available offsets, taking new partitions into account.
     */
-  protected def latestOffsets(): Map[TopicQueueId, Map[String, Long]] = {
+  protected def latestOffsets(): Map[MessageQueue, Long] = {
     val c = consumer
 
     val messageQueues = fetchSubscribeMessageQueues(topics)
 
-    var maxOffsets = Map[TopicQueueId, Map[String, Long]]()
+    var maxOffsets = Map[MessageQueue, Long]()
 
     val lastTopicQueues = currentOffsets.keySet
-    val fetchTopicQueues = mutable.Set[TopicQueueId]()
-    val iter = messageQueues.iterator
-    while (iter.hasNext) {
-      val messageQueue = iter.next
-      logDebug(s"${messageQueue.toString} min: ${c.minOffset(messageQueue)}  max: ${c.maxOffset(messageQueue)}")
-      val topicQueueId = new TopicQueueId(messageQueue.getTopic, messageQueue.getQueueId)
-      fetchTopicQueues.add(topicQueueId)
-      if (!currentOffsets.contains(topicQueueId)){
-        currentOffsets += topicQueueId -> Map(messageQueue.getBrokerName -> firstConsumerOffset(messageQueue))
-      }else{
-        if (!currentOffsets(topicQueueId).contains(messageQueue.getBrokerName))
-          currentOffsets(topicQueueId) += messageQueue.getBrokerName -> firstConsumerOffset(messageQueue)
-      }
-      if (!maxOffsets.contains(topicQueueId)) {
-        maxOffsets += topicQueueId -> Map(messageQueue.getBrokerName -> c.maxOffset(messageQueue))
-      }else{
-        if (!maxOffsets(topicQueueId).contains(messageQueue.getBrokerName)) {
-          val tempMap = maxOffsets(topicQueueId) + (messageQueue.getBrokerName -> c.maxOffset(messageQueue))
-          maxOffsets += topicQueueId -> tempMap
-        }
-      }
-    }
+    // 最新的partions
+    val parts = messageQueues.asScala
+    // 新增partitons，即messageQueues
+    val newPartitions = parts.diff(lastTopicQueues)
 
-    val deletedPartitions = lastTopicQueues.diff(fetchTopicQueues)
-    if (deletedPartitions.size > 0){
+    currentOffsets = currentOffsets ++ newPartitions.map(tp => tp -> firstConsumerOffset(tp))
+    val deletedPartitions = lastTopicQueues.diff(parts)
+    if (deletedPartitions.size > 0) {
       reportDataLoss(
         s"Cannot find offsets of ${deletedPartitions}. Some data may have been missed")
     }
-    maxOffsets
+    parts.map(tp => tp -> c.maxOffset(tp)).toMap
   }
 
   /**
     * limits the maximum number of messages per partition
     */
-  protected def clamp(offsets: Map[TopicQueueId, Map[String, Long]]): Map[TopicQueueId, Map[String, Long]] = {
+  protected def clamp(offsets: Map[MessageQueue, Long]): Map[MessageQueue, Long] = {
     maxMessagesPerPartition(offsets).map { mmp =>
-      mmp.map { case (tp, partitionsOffsets) =>
-        tp -> partitionsOffsets.map{case (name, messages) =>
-          name -> Math.min(currentOffsets(tp)(name) + messages, offsets(tp)(name))}
+      mmp.map { case (tp, messages) =>
+        tp -> Math.min(currentOffsets(tp) + messages, offsets(tp))
       }
     }.getOrElse(offsets)
   }
@@ -370,20 +340,24 @@ class MQPullInputDStream(
 
     val untilOffsets = clamp(latestOffsets())
 
-    val offsetRangeRdd: ju.Map[TopicQueueId, Array[OffsetRange]] = new ju.HashMap()
+    val offsetRanges = untilOffsets.map { case (tp, uo) =>
+      val fo = currentOffsets(tp)
+      OffsetRange(tp.getTopic, tp.getQueueId, tp.getBrokerName, fo, uo)
+    }
+
     untilOffsets.foreach { case (tp, uo) =>
       val values = uo.map { case (name, until) =>
         val fo = currentOffsets(tp)(name)
         OffsetRange(tp.topic, tp.queueId, name, fo, until)
       }.toArray
-      offsetRangeRdd.put(tp, values)
+      offsetRanges.put(tp, values)
     }
 
     val rdd = new RocketMqRDD(
-      context.sparkContext, groupId, optionParams, offsetRangeRdd, getPreferredHosts, true)
+      context.sparkContext, groupId, optionParams, offsetRanges.toArray, getPreferredHosts, true)
 
     // Report the record number and metadata of this batch interval to InputInfoTracker.
-    val description = offsetRangeRdd.asScala.flatMap{ case (tp, arrayRange) =>
+    val description = offsetRanges.asScala.flatMap { case (tp, arrayRange) =>
       // Don't display empty ranges.
       arrayRange
     }.filter { offsetRange =>
@@ -395,7 +369,7 @@ class MQPullInputDStream(
     }.mkString("\n")
     // Copy offsetRanges to immutable.List to prevent from being modified by the user
     val metadata = Map(
-      "offsets" -> offsetRangeRdd,
+      "offsets" -> offsetRanges,
       StreamInputInfo.METADATA_KEY_DESCRIPTION -> description)
     val inputInfo = StreamInputInfo(id, rdd.count, metadata)
     ssc.scheduler.inputInfoTracker.reportInfo(validTime, inputInfo)
@@ -426,6 +400,7 @@ class MQPullInputDStream(
 
   /**
     * Queue up offset ranges for commit to rocketmq at a future time.  Threadsafe.
+    *
     * @param offsetRanges The maximum untilOffset for a given partition will be used at commit.
     */
   def commitAsync(offsetRanges: ju.Map[TopicQueueId, Array[OffsetRange]]): Unit = {
@@ -434,12 +409,13 @@ class MQPullInputDStream(
 
   /**
     * Queue up offset ranges for commit to rocketmq at a future time.  Threadsafe.
+    *
     * @param offsetRanges The maximum untilOffset for a given partition will be used at commit.
-    * @param callback Only the most recently provided callback will be used at commit.
+    * @param callback     Only the most recently provided callback will be used at commit.
     */
   def commitAsync(offsetRanges: ju.Map[TopicQueueId, Array[OffsetRange]], callback: OffsetCommitCallback): Unit = {
     commitCallback.set(callback)
-    offsetRanges.values.asScala.foreach{ value =>
+    offsetRanges.values.asScala.foreach { value =>
       commitQueue.addAll(ju.Arrays.asList(value: _*))
     }
   }
@@ -468,7 +444,7 @@ class MQPullInputDStream(
 
 
   override def start(): Unit = {
-     consumer
+    consumer
   }
 
   override def stop(): Unit = this.synchronized {
@@ -487,21 +463,21 @@ class MQPullInputDStream(
       batchForTime.clear()
       generatedRDDs.foreach { kv =>
         val values = new mutable.HashMap[TopicQueueId, Array[OffsetRange.OffsetRangeTuple]]
-        kv._2.asInstanceOf[RocketMqRDD].offsetRanges.asScala.foreach{ case (k, v) =>
+        kv._2.asInstanceOf[RocketMqRDD].offsetRanges.asScala.foreach { case (k, v) =>
           values.put(k, v.map(_.toTuple))
         }
-        batchForTime += kv._1 ->values
+        batchForTime += kv._1 -> values
       }
     }
 
-    override def cleanup(time: Time): Unit = { }
+    override def cleanup(time: Time): Unit = {}
 
     override def restore(): Unit = {
       batchForTime.toSeq.sortBy(_._1)(Time.ordering).foreach { case (t, b) =>
         logInfo(s"Restoring RocketMqRDD for time $t $b")
 
         val offsetRanges = new ju.HashMap[TopicQueueId, Array[OffsetRange]]()
-        b.foreach{ case (i, j) =>
+        b.foreach { case (i, j) =>
           offsetRanges.put(i, j.map(OffsetRange(_)))
         }
 

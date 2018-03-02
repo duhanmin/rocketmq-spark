@@ -17,15 +17,16 @@
 
 package org.apache.spark.streaming
 
-import org.apache.rocketmq.common.message.MessageExt
+import java.{util => ju}
+
+import com.alibaba.rocketmq.common.message.{MessageExt, MessageQueue}
 import org.apache.rocketmq.spark._
 import org.apache.spark.partial.{BoundedDouble, PartialResult}
 import org.apache.spark.rdd.RDD
 import org.apache.spark.scheduler.ExecutorCacheTaskLocation
 import org.apache.spark.storage.StorageLevel
 import org.apache.spark.{Partition, SparkContext, TaskContext}
-import java.{util => ju}
-import scala.collection.JavaConverters._
+
 import scala.collection.mutable.ArrayBuffer
 
 
@@ -33,21 +34,22 @@ import scala.collection.mutable.ArrayBuffer
   * A batch-oriented interface for consuming from RocketMq.
   * Starting and ending offsets are specified in advance,
   * so that you can control exactly-once semantics.
-  * @param groupId it is for rocketMq for identifying the consumer
-  * @param optionParams the configs
-  * @param offsetRanges offset ranges that define the RocketMq data belonging to this RDD
-  * @param preferredHosts map from TopicQueueId to preferred host for processing that partition.
-  * In most cases, use [[LocationStrategy.PreferConsistent]]
+  *
+  * @param groupId          it is for rocketMq for identifying the consumer
+  * @param optionParams     the configs
+  * @param offsetRanges     offset ranges that define the RocketMq data belonging to this RDD
+  * @param preferredHosts   map from TopicQueueId to preferred host for processing that partition.
+  *                         In most cases, use [[LocationStrategy.PreferConsistent]]
   * @param useConsumerCache useConsumerCache whether to use a consumer from a per-jvm cache
   */
-class RocketMqRDD (
-      sc: SparkContext,
-      val groupId: String,
-      val optionParams: ju.Map[String, String],
-      val offsetRanges: ju.Map[TopicQueueId, Array[OffsetRange]],
-      val preferredHosts: ju.Map[TopicQueueId, String],
-      val useConsumerCache: Boolean
-    )extends RDD[MessageExt](sc, Nil) with HasOffsetRanges{
+class RocketMqRDD(
+                   sc: SparkContext,
+                   val groupId: String,
+                   val optionParams: ju.Map[String, String],
+                   val offsetRanges: Array[OffsetRange],
+                   val preferredHosts: ju.Map[MessageQueue, String],
+                   val useConsumerCache: Boolean
+                 ) extends RDD[MessageExt](sc, Nil) with HasOffsetRanges {
 
   private val cacheInitialCapacity =
     optionParams.getOrDefault(RocketMQConfig.PULL_CONSUMER_CACHE_INIT_CAPACITY, "16").toInt
@@ -61,12 +63,12 @@ class RocketMqRDD (
   }
 
   override def getPartitions: Array[Partition] = {
-    offsetRanges.asScala.toArray.zipWithIndex.map{ case ((first, second), i) =>
-      new RocketMqRDDPartition(i, first.topic, first.queueId, second)
+    offsetRanges.zipWithIndex.map { case (o, i) =>
+      new RocketMqRDDPartition(i, o.topic, o.brokerName, o.queueId, o.fromOffset, o.untilOffset)
     }.toArray
   }
 
-  override def count(): Long = offsetRanges.asScala.map(_._2.map(_.count).sum).sum
+  override def count(): Long = offsetRanges.map(_.count()).sum
 
   override def countApprox(
                             timeout: Long,
@@ -116,8 +118,8 @@ class RocketMqRDD (
   }
 
   private def compareExecutors(
-     a: ExecutorCacheTaskLocation,
-     b: ExecutorCacheTaskLocation): Boolean =
+                                a: ExecutorCacheTaskLocation,
+                                b: ExecutorCacheTaskLocation): Boolean =
     if (a.host == b.host) {
       a.executorId > b.executorId
     } else {
@@ -134,7 +136,7 @@ class RocketMqRDD (
     // so that caching consumers can be effective.
     val part = thePart.asInstanceOf[RocketMqRDDPartition]
     val allExecs = executors()
-    val tp = part.topicQueueId()
+    val tp = part.messageQueue()
     val prefHost = preferredHosts.get(tp)
     val prefExecs = if (null == prefHost) allExecs else allExecs.filter(_.host == prefHost)
     val execs = if (prefExecs.isEmpty) allExecs else prefExecs
@@ -149,9 +151,9 @@ class RocketMqRDD (
   }
 
   private def errBeginAfterEnd(part: RocketMqRDDPartition): String =
-    s"Beginning offset is after the ending offset ${part.partitionOffsetRanges.mkString(",")} " +
+    s"Beginning offset  ${part.fromOffset} is after the ending offset ${part.untilOffset} " +
       s"for topic ${part.topic} partition ${part.index}. " +
-      "You either provided an invalid fromOffset, or the Kafka topic has been damaged"
+      "You either provided an invalid fromOffset, or the RocketMq topic has been damaged"
 
   override def compute(thePart: Partition, context: TaskContext): Iterator[MessageExt] = {
     val part = thePart.asInstanceOf[RocketMqRDDPartition]
@@ -172,59 +174,48 @@ class RocketMqRDD (
     * Uses a cached consumer where possible to take advantage of prefetching
     */
   private class RocketMqRDDIterator(
-    part: RocketMqRDDPartition,
-    context: TaskContext) extends Iterator[MessageExt] {
+                                     part: RocketMqRDDPartition,
+                                     context: TaskContext) extends Iterator[MessageExt] {
 
-    logDebug(s"Computing topic ${part.topic}, queueId ${part.queueId} " +
-      s"offsets ${part.partitionOffsetRanges.mkString(",")}")
+    logDebug(s"Computing topic ${part.topic}, broker ${part.name}, queueId ${part.queueId} " +
+      s"offsets ${part.fromOffset} -> ${part.untilOffset}")
 
-    context.addTaskCompletionListener{ context => closeIfNeeded() }
+    context.addTaskCompletionListener { context => closeIfNeeded() }
 
 
     val consumer = if (useConsumerCache) {
       CachedMQConsumer.init(cacheInitialCapacity, cacheMaxCapacity, cacheLoadFactor)
       if (context.attemptNumber > 5) {
         // just in case the prior attempt failures were cache related
-        CachedMQConsumer.remove(groupId, part.topic, part.queueId, part.brokerNames)
+        CachedMQConsumer.remove(groupId, part.topic, part.queueId, part.name)
       }
-      CachedMQConsumer.getOrCreate(groupId, part.topic, part.queueId, part.brokerNames, optionParams)
+      CachedMQConsumer.getOrCreate(groupId, part.topic, part.queueId, part.name, optionParams)
     } else {
-      CachedMQConsumer.getUncached(groupId, part.topic, part.queueId, part.brokerNames, optionParams)
+      CachedMQConsumer.getUncached(groupId, part.topic, part.queueId, part.name, optionParams)
     }
 
-    var logicTotalOffset = 0
-    val totalSum = part.partitionOffsetRanges.map(_.count).sum
-    var index = 0
-    var requestOffset = part.partitionOffsetRanges.apply(index).fromOffset
+    var requestOffset: Long = part.fromOffset
 
     def closeIfNeeded(): Unit = {
       if (!useConsumerCache && consumer != null) {
-        consumer.client.shutdown
+        consumer.client.shutdown()
       }
     }
 
     override def hasNext(): Boolean = {
-      totalSum > logicTotalOffset
+      requestOffset < part.untilOffset
+
     }
 
     override def next(): MessageExt = {
       assert(hasNext(), "Can't call getNext() once untilOffset has been reached")
-      val queueRange = part.partitionOffsetRanges.apply(index)
-      val r = consumer.get(queueRange.brokerName, requestOffset)
-      if (queueRange.untilOffset > (requestOffset + 1))
-        requestOffset +=1
-      else {
-        index +=1
-        if (part.partitionOffsetRanges.length > index)
-          requestOffset = part.partitionOffsetRanges.apply(index).fromOffset
-      }
-      logicTotalOffset += 1
+      val r = consumer.get(requestOffset)
+      requestOffset += 1
       r
     }
   }
 
   private[RocketMqRDD]
   type OffsetRangeTuple = (String, Int)
-
 
 }

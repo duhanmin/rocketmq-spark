@@ -20,17 +20,17 @@ package org.apache.rocketmq.spark
 import java.util.Properties
 import java.{lang => jl, util => ju}
 
+import com.alibaba.rocketmq.client.consumer.DefaultMQPullConsumer
+import com.alibaba.rocketmq.common.message.{Message, MessageExt}
 import org.apache.commons.lang.StringUtils
-import org.apache.rocketmq.client.consumer.DefaultMQPullConsumer
-import org.apache.rocketmq.common.message.{Message, MessageExt, MessageQueue}
+import org.apache.rocketmq.spark.streaming.{ReliableRocketMQReceiver, RocketMQReceiver}
 import org.apache.spark.SparkContext
 import org.apache.spark.api.java.{JavaRDD, JavaSparkContext}
 import org.apache.spark.rdd.RDD
+import org.apache.spark.storage.StorageLevel
 import org.apache.spark.streaming.api.java.{JavaInputDStream, JavaStreamingContext}
 import org.apache.spark.streaming.dstream.InputDStream
 import org.apache.spark.streaming.{MQPullInputDStream, RocketMqRDD, StreamingContext}
-import org.apache.rocketmq.spark.streaming.{ReliableRocketMQReceiver, RocketMQReceiver}
-import org.apache.spark.storage.StorageLevel
 
 object RocketMqUtils {
 
@@ -85,19 +85,19 @@ object RocketMqUtils {
 
   /**
     * Scala constructor for a RocketMq DStream
-    * @param groupId it is for rocketMq for identifying the consumer
-    * @param topics the topics for the rocketmq
+    * @param groupId          it is for rocketMq for identifying the consumer
+    * @param topics           the topics for the rocketmq
     * @param consumerStrategy consumerStrategy In most cases, pass in [[ConsumerStrategy.lastest]],
-    *   see [[ConsumerStrategy]] for more details
-    * @param autoCommit whether commit the offset to the rocketmq server automatically or not. If the user
-    *                   implement the [[OffsetCommitCallback]], the autoCommit must be set false
-    * @param forceSpecial Generally if the rocketmq server has checkpoint for the [[MessageQueue]], then the consumer
-    *  will consume from the checkpoint no matter we specify the offset or not. But if forceSpecial is true,
-    *  the rocketmq will start consuming from the specific available offset in any case.
-    * @param failOnDataLoss Zero data lost is not guaranteed when topics are deleted. If zero data lost is critical,
-    * the user must make sure all messages in a topic have been processed when deleting a topic.
+    *                         see [[ConsumerStrategy]] for more details
+    * @param autoCommit       whether commit the offset to the rocketmq server automatically or not. If the user
+    *                         implement the [[OffsetCommitCallback]], the autoCommit must be set false
+    * @param forceSpecial     Generally if the rocketmq server has checkpoint for the [[com.alibaba.rocketmq.common.message.MessageQueue]], then the consumer
+    *                         will consume from the checkpoint no matter we specify the offset or not. But if forceSpecial is true,
+    *                         the rocketmq will start consuming from the specific available offset in any case.
+    * @param failOnDataLoss   Zero data lost is not guaranteed when topics are deleted. If zero data lost is critical,
+    *                         the user must make sure all messages in a topic have been processed when deleting a topic.
     * @param locationStrategy map from TopicQueueId to preferred host for processing that partition.
-    * In most cases, use [[LocationStrategy.PreferConsistent]]
+    *                         In most cases, use [[LocationStrategy.PreferConsistent]]
     * @param optionParams optional configs, see [[RocketMQConfig]] for more details.
     * @return InputDStream[MessageExt]
     */
@@ -135,19 +135,19 @@ object RocketMqUtils {
 
   /**
     * Java constructor for a RocketMq DStream
-    * @param groupId it is for rocketMq for identifying the consumer
-    * @param topics the topics for the rocketmq
+    * @param groupId          it is for rocketMq for identifying the consumer
+    * @param topics           the topics for the rocketmq
     * @param consumerStrategy consumerStrategy In most cases, pass in [[ConsumerStrategy.lastest]],
-    *   see [[ConsumerStrategy]] for more details
-    * @param autoCommit whether commit the offset to the rocketmq server automatically or not. If the user
-    *                   implement the [[OffsetCommitCallback]], the autoCommit must be set false
-    * @param forceSpecial Generally if the rocketmq server has checkpoint for the [[MessageQueue]], then the consumer
-    *  will consume from the checkpoint no matter we specify the offset or not. But if forceSpecial is true,
-    *  the rocketmq will start consuming from the specific available offset in any case.
-    * @param failOnDataLoss Zero data lost is not guaranteed when topics are deleted. If zero data lost is critical,
-    * the user must make sure all messages in a topic have been processed when deleting a topic.
+    *                         see [[ConsumerStrategy]] for more details
+    * @param autoCommit       whether commit the offset to the rocketmq server automatically or not. If the user
+    *                         implement the [[OffsetCommitCallback]], the autoCommit must be set false
+    * @param forceSpecial     Generally if the rocketmq server has checkpoint for the [[com.alibaba.rocketmq.common.message.MessageQueue]], then the consumer
+    *                         will consume from the checkpoint no matter we specify the offset or not. But if forceSpecial is true,
+    *                         the rocketmq will start consuming from the specific available offset in any case.
+    * @param failOnDataLoss   Zero data lost is not guaranteed when topics are deleted. If zero data lost is critical,
+    *                         the user must make sure all messages in a topic have been processed when deleting a topic.
     * @param locationStrategy map from TopicQueueId to preferred host for processing that partition.
-    * In most cases, use [[LocationStrategy.PreferConsistent]]
+    *                         In most cases, use [[LocationStrategy.PreferConsistent]]
     * @param optionParams optional configs, see [[RocketMQConfig]] for more details.
     * @return JavaInputDStream[MessageExt]
     */
