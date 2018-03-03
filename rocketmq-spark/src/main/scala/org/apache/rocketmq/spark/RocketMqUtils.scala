@@ -21,7 +21,7 @@ import java.util.Properties
 import java.{lang => jl, util => ju}
 
 import com.alibaba.rocketmq.client.consumer.DefaultMQPullConsumer
-import com.alibaba.rocketmq.common.message.{Message, MessageExt}
+import com.alibaba.rocketmq.common.message.{Message, MessageExt, MessageQueue}
 import org.apache.commons.lang.StringUtils
 import org.apache.rocketmq.spark.streaming.{ReliableRocketMQReceiver, RocketMQReceiver}
 import org.apache.spark.SparkContext
@@ -49,13 +49,13 @@ object RocketMqUtils {
   def createRDD(
        sc: SparkContext,
        groupId: String,
-       offsetRanges: ju.Map[TopicQueueId, Array[OffsetRange]],
+       offsetRanges: Array[OffsetRange],
        optionParams: ju.Map[String, String] = new ju.HashMap,
        locationStrategy: LocationStrategy = PreferConsistent
      ): RDD[MessageExt] = {
 
     val preferredHosts = locationStrategy match {
-      case PreferConsistent => ju.Collections.emptyMap[TopicQueueId, String]()
+      case PreferConsistent => ju.Collections.emptyMap[MessageQueue, String]()
       case PreferFixed(hostMap) => hostMap
     }
     new RocketMqRDD(sc, groupId, optionParams, offsetRanges, preferredHosts, false)
@@ -76,7 +76,7 @@ object RocketMqUtils {
   def createJavaRDD(
        jsc: JavaSparkContext,
        groupId: String,
-       offsetRanges: ju.Map[TopicQueueId, Array[OffsetRange]],
+       offsetRanges: Array[OffsetRange],
        optionParams: ju.Map[String, String] = new ju.HashMap,
        locationStrategy: LocationStrategy = PreferConsistent
      ): JavaRDD[MessageExt] = {

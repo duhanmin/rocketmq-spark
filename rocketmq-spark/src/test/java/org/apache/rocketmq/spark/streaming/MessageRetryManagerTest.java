@@ -17,7 +17,8 @@
  */
 package org.apache.rocketmq.spark.streaming;
 
-import org.apache.rocketmq.common.message.MessageExt;
+
+import com.alibaba.rocketmq.common.message.MessageExt;
 import org.junit.Before;
 import org.junit.Test;
 

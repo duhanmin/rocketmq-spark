@@ -17,17 +17,13 @@
  */
 package org.apache.rocketmq.spark.streaming;
 
-import org.apache.rocketmq.client.exception.MQBrokerException;
-import org.apache.rocketmq.client.exception.MQClientException;
-import org.apache.rocketmq.common.message.MessageExt;
-import org.apache.rocketmq.spark.ConsumerStrategy;
-import org.apache.rocketmq.spark.HasOffsetRanges;
-import org.apache.rocketmq.spark.LocationStrategy;
-import org.apache.rocketmq.spark.OffsetRange;
-import org.apache.rocketmq.spark.RocketMQConfig;
-import org.apache.rocketmq.spark.RocketMQServerMock;
-import org.apache.rocketmq.spark.RocketMqUtils;
-import org.apache.rocketmq.spark.TopicQueueId;
+
+
+import com.alibaba.rocketmq.client.exception.MQBrokerException;
+import com.alibaba.rocketmq.client.exception.MQClientException;
+import com.alibaba.rocketmq.common.message.MessageExt;
+import com.alibaba.rocketmq.common.message.MessageQueue;
+import org.apache.rocketmq.spark.*;
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.function.Function;
@@ -41,14 +37,7 @@ import org.junit.Test;
 
 import java.io.Serializable;
 import java.io.UnsupportedEncodingException;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.UUID;
+import java.util.*;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class RocketMqUtilsTest implements Serializable {
@@ -129,14 +118,14 @@ public class RocketMqUtilsTest implements Serializable {
                 topics, ConsumerStrategy.earliest(), false, false, false, locationStrategy, optionParams);
 
         // hold a reference to the current offset ranges, so it can be used downstream
-        final AtomicReference<Map<TopicQueueId, OffsetRange[]>> offsetRanges = new AtomicReference<>();
+        final AtomicReference<OffsetRange[]> offsetRanges = new AtomicReference<>();
 
         final Set<MessageExt> result = Collections.synchronizedSet(new HashSet<MessageExt>());
 
         dStream.transform(new Function<JavaRDD<MessageExt>, JavaRDD<MessageExt>>() {
             @Override
             public JavaRDD<MessageExt> call(JavaRDD<MessageExt> v1) throws Exception {
-                Map<TopicQueueId, OffsetRange []> offsets = ((HasOffsetRanges) v1.rdd()).offsetRanges();
+                 OffsetRange[] offsets = ((HasOffsetRanges) v1.rdd()).offsetRanges();
                 offsetRanges.set(offsets);
                 return v1;
             }

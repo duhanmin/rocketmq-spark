@@ -56,13 +56,13 @@ object LocationStrategy {
     * Use this to place particular TopicQueueIds on particular hosts if your load is uneven.
     * Any TopicQueueId not specified in the map will use a consistent location.
     */
-  def PreferFixed(hostMap: collection.Map[TopicQueueId, String]): LocationStrategy =
-  new PreferFixed(new ju.HashMap[TopicQueueId, String](hostMap.asJava))
+  def PreferFixed(hostMap: collection.Map[MessageQueue, String]): LocationStrategy =
+  new PreferFixed(new ju.HashMap[MessageQueue, String](hostMap.asJava))
 
   /**
     * Use this to place particular TopicQueueIds on particular hosts if your load is uneven.
     * Any TopicQueueId not specified in the map will use a consistent location.
     */
-  def PreferFixed(hostMap: ju.Map[TopicQueueId, String]): LocationStrategy =
+  def PreferFixed(hostMap: ju.Map[MessageQueue, String]): LocationStrategy =
   new PreferFixed(hostMap)
 }

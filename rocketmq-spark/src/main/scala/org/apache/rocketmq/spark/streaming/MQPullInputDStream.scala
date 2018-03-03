@@ -66,7 +66,7 @@ class MQPullInputDStream(
                           failOnDataLoss: Boolean
                         ) extends InputDStream[MessageExt](_ssc) with CanCommitOffsets {
 
-  private var currentOffsets = mutable.Map[MessageQueue, Long]()
+  private var currentOffsets = Map[MessageQueue, Long]()
 
   private val commitQueue = new ConcurrentLinkedQueue[OffsetRange]
 
@@ -345,22 +345,22 @@ class MQPullInputDStream(
       OffsetRange(tp.getTopic, tp.getQueueId, tp.getBrokerName, fo, uo)
     }
 
-    untilOffsets.foreach { case (tp, uo) =>
-      val values = uo.map { case (name, until) =>
-        val fo = currentOffsets(tp)(name)
-        OffsetRange(tp.topic, tp.queueId, name, fo, until)
-      }.toArray
-      offsetRanges.put(tp, values)
-    }
+    //    untilOffsets.foreach { case (tp, uo) =>
+    //      val values = uo.map { case (name, until) =>
+    //        val fo = currentOffsets(tp)(name)
+    //        OffsetRange(tp.topic, tp.queueId, name, fo, until)
+    //      }.toArray
+    //      offsetRanges.put(tp, values)
+    //    }
 
     val rdd = new RocketMqRDD(
       context.sparkContext, groupId, optionParams, offsetRanges.toArray, getPreferredHosts, true)
 
     // Report the record number and metadata of this batch interval to InputInfoTracker.
-    val description = offsetRanges.asScala.flatMap { case (tp, arrayRange) =>
+    val description = offsetRanges /*.asScala.flatMap { case (tp, arrayRange) =>
       // Don't display empty ranges.
       arrayRange
-    }.filter { offsetRange =>
+    }*/ .filter { offsetRange =>
       offsetRange.fromOffset != offsetRange.untilOffset
     }.map { offsetRange =>
       s"topic: ${offsetRange.topic}\tqueueId: ${offsetRange.queueId}\t" +
@@ -374,15 +374,11 @@ class MQPullInputDStream(
     val inputInfo = StreamInputInfo(id, rdd.count, metadata)
     ssc.scheduler.inputInfoTracker.reportInfo(validTime, inputInfo)
 
-    currentOffsets = collection.mutable.Map() ++ untilOffsets
+    currentOffsets = untilOffsets
 
     if (autoCommit) {
-      currentOffsets.foreach { case (tp, uo) =>
-        uo.map { case (name, until) =>
-          val offset = currentOffsets(tp)(name) - 1
-          val mq = new MessageQueue(tp.topic, name, tp.queueId)
-          kc.updateConsumeOffset(mq, offset)
-        }
+      currentOffsets.foreach { case (tp, until) =>
+        kc.updateConsumeOffset(tp, currentOffsets(tp) - 1)
       }
     } else {
       commitAll()
@@ -403,7 +399,7 @@ class MQPullInputDStream(
     *
     * @param offsetRanges The maximum untilOffset for a given partition will be used at commit.
     */
-  def commitAsync(offsetRanges: ju.Map[TopicQueueId, Array[OffsetRange]]): Unit = {
+  def commitAsync(offsetRanges: Array[OffsetRange]): Unit = {
     commitAsync(offsetRanges, null)
   }
 
@@ -413,11 +409,9 @@ class MQPullInputDStream(
     * @param offsetRanges The maximum untilOffset for a given partition will be used at commit.
     * @param callback     Only the most recently provided callback will be used at commit.
     */
-  def commitAsync(offsetRanges: ju.Map[TopicQueueId, Array[OffsetRange]], callback: OffsetCommitCallback): Unit = {
+  def commitAsync(offsetRanges: Array[OffsetRange], callback: OffsetCommitCallback): Unit = {
     commitCallback.set(callback)
-    offsetRanges.values.asScala.foreach { value =>
-      commitQueue.addAll(ju.Arrays.asList(value: _*))
-    }
+    commitQueue.addAll(ju.Arrays.asList(offsetRanges: _*))
   }
 
   protected def commitAll(): Unit = {
@@ -426,7 +420,7 @@ class MQPullInputDStream(
     try {
       while (null != osr) {
         //Exclusive ending offset
-        val mq = new MessageQueue(osr.topic, osr.brokerName, osr.queueId)
+        val mq = osr.topicMessageQueue()
         kc.updateConsumeOffset(mq, osr.untilOffset - 1)
         m.put(mq, osr.untilOffset - 1)
         osr = commitQueue.poll()
@@ -455,18 +449,15 @@ class MQPullInputDStream(
 
   private[streaming]
   class MQInputDStreamCheckpointData extends DStreamCheckpointData(this) {
-    def batchForTime: mutable.HashMap[Time, mutable.HashMap[TopicQueueId, Array[(String, Int, String, Long, Long)]]] = {
-      data.asInstanceOf[mutable.HashMap[Time, mutable.HashMap[TopicQueueId, Array[OffsetRange.OffsetRangeTuple]]]]
+    def batchForTime: mutable.HashMap[Time, Array[(String, Int, String, Long, Long)]] = {
+      data.asInstanceOf[mutable.HashMap[Time, Array[OffsetRange.OffsetRangeTuple]]]
     }
 
     override def update(time: Time): Unit = {
       batchForTime.clear()
       generatedRDDs.foreach { kv =>
-        val values = new mutable.HashMap[TopicQueueId, Array[OffsetRange.OffsetRangeTuple]]
-        kv._2.asInstanceOf[RocketMqRDD].offsetRanges.asScala.foreach { case (k, v) =>
-          values.put(k, v.map(_.toTuple))
-        }
-        batchForTime += kv._1 -> values
+        val a = kv._2.asInstanceOf[RocketMqRDD].offsetRanges.map(_.toTuple)
+        batchForTime += kv._1 -> a
       }
     }
 
@@ -475,17 +466,11 @@ class MQPullInputDStream(
     override def restore(): Unit = {
       batchForTime.toSeq.sortBy(_._1)(Time.ordering).foreach { case (t, b) =>
         logInfo(s"Restoring RocketMqRDD for time $t $b")
-
-        val offsetRanges = new ju.HashMap[TopicQueueId, Array[OffsetRange]]()
-        b.foreach { case (i, j) =>
-          offsetRanges.put(i, j.map(OffsetRange(_)))
-        }
-
-        generatedRDDs += t -> new RocketMqRDD(
+          generatedRDDs += t -> new RocketMqRDD(
           context.sparkContext,
           groupId,
           optionParams,
-          offsetRanges,
+          b.map(OffsetRange(_)),
           getPreferredHosts,
           // during restore, it's possible same partition will be consumed from multiple
           // threads, so dont use cache
